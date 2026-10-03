@@ -1,11 +1,15 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "frontend",
+  "name": "hyperbeam",
   "compatibility_date": "2026-10-01",
   "observability": {
     "enabled": true
   },
   "assets": {
     "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "VITE_WS_URL": "wss://hyperbeam-backend.ghodadrakeyur34.workers.dev/ws",
+    "VITE_API_URL": "https://hyperbeam-backend.ghodadrakeyur34.workers.dev"
   }
 }
