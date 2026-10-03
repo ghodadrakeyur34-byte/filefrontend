@@ -19,10 +19,10 @@ import { HyperBeamPeer } from './lib/webrtc/peerConnection.js';
 import { R2TransferEngine } from './lib/r2Uploader.js';
 import { API_URL } from './lib/config.js';
 
-import { Send, Share2, Activity, Shield } from 'lucide-react';
+import { Send, Share2, Shield, Zap } from 'lucide-react';
 
 export const App: React.FC = () => {
-  // Transfer Mode: P2P or Cloudflare R2
+  const [activeTab, setActiveTab] = useState<'send' | 'receive'>('send');
   const [mode, setMode] = useState<TransferMode>('p2p');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [transferState, setTransferState] = useState<TransferState>('idle');
@@ -52,45 +52,38 @@ export const App: React.FC = () => {
   });
 
   // URL query check: Receiver Mode
-  const [isReceiverMode, setIsReceiverMode] = useState<boolean>(false);
-  const [receiverRoomId, setReceiverRoomId] = useState<string>('');
+  const [urlRoomId, setUrlRoomId] = useState<string>('');
 
   const signalingRef = useRef<SignalingClient | null>(null);
   const peerRef = useRef<HyperBeamPeer | null>(null);
   const speedMonitorRef = useRef<SpeedMonitor | null>(null);
 
-  // Check URL parameters for receiver mode
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
     if (room) {
-      setIsReceiverMode(true);
-      setReceiverRoomId(room);
+      setActiveTab('receive');
+      setUrlRoomId(room);
     }
   }, []);
 
-  // When a file is selected by sender
   const handleFileSelected = async (file: File) => {
     setSelectedFile(file);
     setTransferState('preparing');
-    setStatusMessage('Generating 256-bit zero-knowledge cryptographic key...');
+    setStatusMessage('Generating client-side AES-256-GCM key...');
 
-    // 1. Generate client-side AES-256-GCM key
     const key = await generateEncryptionKey();
     const anchor = await exportKeyToBase64Url(key);
     setCryptoKey(key);
     setKeyAnchor(anchor);
 
-    // 2. Generate room ID
     const generatedRoom = `HB-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     setRoomId(generatedRoom);
 
-    // 3. Partition chunks
     const chunkSize = calculateOptimalChunkSize(file.size);
     const chunkList = generateChunkManifest(file.size, chunkSize);
     setChunks(chunkList);
 
-    // 4. Initialize speed monitor
     speedMonitorRef.current = new SpeedMonitor(file.size);
     setTelemetry({
       bytesTransferred: 0,
@@ -105,27 +98,36 @@ export const App: React.FC = () => {
       latencyMs: 0,
     });
 
-    setStatusMessage('Payload partitioned and encrypted in memory. Computing SHA-256 integrity digest...');
+    setStatusMessage('Payload partitioned. Calculating SHA-256 integrity hash...');
 
-    // 5. Calculate SHA-256 digest in background
     computeFileSha256(file)
       .then((digest) => {
         setSha256(digest);
-        setStatusMessage('SHA-256 checksum computed. Ready for peer connection.');
+        setStatusMessage('Payload ready. Click Initiate Transfer to start.');
       })
-      .catch((err) => console.warn('SHA-256 computation non-critical warning:', err));
+      .catch((err) => console.warn('SHA-256 warning:', err));
 
     setShowShareModal(true);
     setTransferState('idle');
   };
 
-  // Launch transfer
+  const handleClearFile = () => {
+    setSelectedFile(null);
+    setChunks([]);
+    setCryptoKey(null);
+    setKeyAnchor('');
+    setSha256('');
+    setRoomId('');
+    setTransferState('idle');
+    setStatusMessage('Ready to stage transfer');
+  };
+
   const handleInitiateTransmission = async () => {
     if (!selectedFile || !cryptoKey) return;
 
     soundEffects.playLock();
     setTransferState('connecting');
-    setStatusMessage('Establishing signaling link...');
+    setStatusMessage('Registering transfer session...');
 
     const chunkSize = calculateOptimalChunkSize(selectedFile.size);
     const manifest: TransferManifest = {
@@ -142,7 +144,6 @@ export const App: React.FC = () => {
       expiresAt: Date.now() + 3600000,
     };
 
-    // Save manifest to backend session registry
     try {
       await fetch(`${API_URL}/api/session/manifest`, {
         method: 'POST',
@@ -154,13 +155,12 @@ export const App: React.FC = () => {
     }
 
     if (mode === 'p2p') {
-      // Connect to WebSocket signaling
       const signaling = new SignalingClient();
       signalingRef.current = signaling;
 
       signaling.addListener((msg) => {
         if (msg.type === 'peer-joined') {
-          setStatusMessage('Peer detected in room. Starting WebRTC handshake...');
+          setStatusMessage('Recipient connected! Starting WebRTC handshake...');
           startP2POffer(msg.senderId, manifest);
         } else if (msg.type === 'answer' && msg.payload) {
           peerRef.current?.handleAnswer((msg.payload as { sdp: RTCSessionDescriptionInit }).sdp);
@@ -170,11 +170,10 @@ export const App: React.FC = () => {
       });
 
       await signaling.connect(roomId, 'sender');
-      setStatusMessage('Broadcasting room offer. Waiting for recipient to open link...');
+      setStatusMessage('Waiting for recipient to connect...');
     } else {
-      // Mode B: Cloudflare R2 Edge Staging
       setTransferState('transferring');
-      setStatusMessage('Streaming parallel encrypted multi-part chunks directly to Cloudflare R2...');
+      setStatusMessage('Uploading parallel encrypted chunks to Cloudflare R2...');
 
       try {
         await R2TransferEngine.uploadFile(
@@ -207,11 +206,11 @@ export const App: React.FC = () => {
 
         soundEffects.playComplete();
         setTransferState('completed');
-        setStatusMessage('Payload securely uploaded to Cloudflare R2 edge! Recipient can now download.');
+        setStatusMessage('Upload complete! The recipient can download anytime.');
       } catch (err) {
         soundEffects.playAlert();
         setTransferState('error');
-        setStatusMessage(`R2 Staging Error: ${(err as Error).message}`);
+        setStatusMessage(`Error: ${(err as Error).message}`);
       }
     }
   };
@@ -228,7 +227,7 @@ export const App: React.FC = () => {
       },
       onDataChannelReady: async (streamer) => {
         setTransferState('transferring');
-        setStatusMessage('Encrypted SCTP DataChannel opened. Streaming chunks...');
+        setStatusMessage('Direct DataChannel active. Streaming chunks...');
         await streamFileToPeer(streamer);
       },
     });
@@ -236,7 +235,6 @@ export const App: React.FC = () => {
     await peer.initialize();
     peerRef.current = peer;
 
-    // Send manifest to receiver
     signalingRef.current.send({
       type: 'manifest',
       roomId,
@@ -246,7 +244,6 @@ export const App: React.FC = () => {
       timestamp: Date.now(),
     });
 
-    // Create SDP Offer
     await peer.createOffer(receiverPeerId);
   };
 
@@ -259,13 +256,9 @@ export const App: React.FC = () => {
       setCurrentChunkIndex(i);
       setChunks((prev) => prev.map((c) => (c.index === i ? { ...c, status: 'active' } : c)));
 
-      // 1. Read slice from disk without heap bloat
       const rawSlice = await readChunkSlice(selectedFile, chunks[i]);
-
-      // 2. Encrypt slice with AES-256-GCM
       const encryptedSlice = await encryptBuffer(rawSlice, cryptoKey);
 
-      // 3. Send over SCTP DataChannel with backpressure flow control
       await streamer.sendChunk(i, chunks.length, encryptedSlice, (bytesSentInChunk) => {
         const currentBytes = bytesSentTotal + bytesSentInChunk;
         speedMonitorRef.current?.recordProgress(currentBytes);
@@ -291,144 +284,161 @@ export const App: React.FC = () => {
 
     soundEffects.playComplete();
     setTransferState('completed');
-    setStatusMessage('Payload transmission complete! All chunks acknowledged by receiver.');
+    setStatusMessage('Transmission complete! File delivered directly to recipient.');
     setCurrentChunkIndex(undefined);
   };
 
-  const shareUrl = `${window.location.origin}/?room=${encodeURIComponent(roomId)}#key=${encodeURIComponent(keyAnchor)}`;
+  const shareUrl = roomId
+    ? `${window.location.origin}/?room=${encodeURIComponent(roomId)}#key=${encodeURIComponent(keyAnchor)}`
+    : '';
+
+  const isTransferActive = transferState === 'transferring' || transferState === 'completed';
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header />
+      <Header
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          if (tab === 'send' && urlRoomId) {
+            window.history.pushState({}, '', window.location.pathname);
+            setUrlRoomId('');
+          }
+        }}
+      />
 
-      <main style={{ flex: 1, padding: 'var(--space-xl) 0' }}>
-        <div className="hud-container">
-          {/* Receiver Cockpit if URL has room parameter */}
-          {isReceiverMode ? (
-            <div className="grid-12">
-              <ReceiveCockpit
-                roomId={receiverRoomId}
-                onReset={() => {
-                  window.history.pushState({}, '', window.location.pathname);
-                  setIsReceiverMode(false);
-                }}
-              />
+      <main style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '40px 20px',
+      }}>
+        {activeTab === 'receive' ? (
+          <ReceiveCockpit
+            roomId={urlRoomId}
+            onReset={() => {
+              window.history.pushState({}, '', window.location.pathname);
+              setUrlRoomId('');
+            }}
+          />
+        ) : (
+          /* Send Mode - Focused Clean Card */
+          <div style={{
+            maxWidth: isTransferActive ? '800px' : '620px',
+            width: '100%',
+            transition: 'max-width var(--transition-normal)',
+          }}>
+            {/* Header Text */}
+            <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+              <h1 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--color-text)', marginBottom: '8px', letterSpacing: '-0.02em' }}>
+                High-Speed Zero-Cost File Transfer
+              </h1>
+              <p style={{ fontSize: '14px', color: 'var(--color-text-muted)', maxWidth: '480px', margin: '0 auto', lineHeight: 1.5 }}>
+                Direct WebRTC peer streaming and Cloudflare R2 multi-part staging with client-side AES-256-GCM zero-knowledge encryption.
+              </p>
             </div>
-          ) : (
-            <div className="grid-12">
-              {/* Mission Header */}
-              <div className="col-12" style={{ marginBottom: 'var(--space-md)' }}>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                  flexWrap: 'wrap',
-                  gap: 'var(--space-md)',
-                }}>
-                  <div>
-                    <h1 className="font-heading" style={{ fontSize: '24px', fontWeight: 700, color: 'var(--color-text)', marginBottom: 'var(--space-xs)' }}>
-                      HIGH-VELOCITY FILE TRANSFER COCKPIT
-                    </h1>
-                    <p style={{ fontSize: '13px', color: 'var(--color-text-muted)', maxWidth: '720px' }}>
-                      100% Free-tier architecture utilizing browser-native WebRTC direct data channels, Cloudflare R2 multi-part staging, and zero-knowledge client-side cryptography.
-                    </p>
-                  </div>
+
+            {/* Central Transfer Card */}
+            <div className="glass-card" style={{ padding: '28px' }}>
+              {/* Transfer Mode Selector */}
+              <ModeSelector
+                mode={mode}
+                onChange={setMode}
+                disabled={transferState === 'transferring'}
+              />
+
+              {/* Drop Zone */}
+              <DropZone
+                onFileSelected={handleFileSelected}
+                onClearFile={handleClearFile}
+                selectedFile={selectedFile}
+                disabled={transferState === 'transferring'}
+              />
+
+              {/* Staged File Action Bar */}
+              {selectedFile && transferState !== 'completed' && (
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                  <button
+                    onClick={handleInitiateTransmission}
+                    disabled={transferState === 'transferring'}
+                    className="btn-primary"
+                    style={{ flex: 1, padding: '14px 20px', fontSize: '14px' }}
+                  >
+                    <Send size={16} />
+                    {transferState === 'transferring'
+                      ? 'Streaming in Progress...'
+                      : `Start Transfer (${mode === 'p2p' ? 'WebRTC P2P' : 'Cloudflare R2'})`}
+                  </button>
 
                   {roomId && (
                     <button
                       onClick={() => setShowShareModal(true)}
                       className="btn-secondary"
-                      style={{ padding: '10px 18px', fontSize: '12px' }}
+                      style={{ padding: '14px 18px', fontSize: '13px' }}
+                      title="View Share Link"
                     >
-                      <Share2 size={15} />
-                      VIEW SECURE LINK ({roomId})
+                      <Share2 size={16} />
+                      Share Link
                     </button>
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Left Column: Transfer Controls */}
-              <div className="col-7">
-                <ModeSelector
-                  mode={mode}
-                  onChange={setMode}
-                  disabled={transferState === 'transferring'}
-                />
-
-                <DropZone
-                  onFileSelected={handleFileSelected}
-                  selectedFile={selectedFile}
-                  disabled={transferState === 'transferring'}
-                />
-
-                {/* Transmission Trigger */}
-                {selectedFile && transferState !== 'completed' && (
-                  <div style={{ marginBottom: 'var(--space-xl)' }}>
-                    <button
-                      onClick={handleInitiateTransmission}
-                      disabled={transferState === 'transferring'}
-                      className="btn-primary"
-                      style={{
-                        width: '100%',
-                        padding: '16px 28px',
-                        fontSize: '13px',
-                      }}
-                    >
-                      <Send size={18} />
-                      {transferState === 'transferring'
-                        ? 'TRANSMISSION IN PROGRESS...'
-                        : `INITIATE BEAM TRANSMISSION (${mode === 'p2p' ? 'WEBRTC P2P' : 'CLOUDFLARE R2'})`}
-                    </button>
-                  </div>
-                )}
-
-                {/* Status Ticker */}
-                <div style={{
-                  background: 'rgba(15, 23, 42, 0.7)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: 'var(--space-md)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--space-md)',
-                  marginBottom: 'var(--space-xl)',
-                }}>
-                  <Activity size={18} color="var(--color-cta)" />
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
-                    MISSION STATUS: <strong style={{ color: 'var(--color-text)' }}>{statusMessage}</strong>
-                  </div>
+              {/* Active Transfer Telemetry & Chunk Matrix */}
+              {isTransferActive && (
+                <div>
+                  <SpeedTelemetry telemetry={telemetry} />
+                  <ChunkMatrix chunks={chunks} currentChunkIndex={currentChunkIndex} />
                 </div>
+              )}
+
+              {/* Status Pill */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 14px',
+                background: 'rgba(255, 255, 255, 0.02)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '12px',
+                color: 'var(--color-text-muted)',
+              }}>
+                <Zap size={14} color="var(--color-cta)" />
+                <span>{statusMessage}</span>
               </div>
 
-              {/* Right Column: Live Telemetry & Matrix */}
-              <div className="col-5">
-                {chunks.length > 0 ? (
-                  <>
-                    <SpeedTelemetry telemetry={telemetry} />
-                    <ChunkMatrix chunks={chunks} currentChunkIndex={currentChunkIndex} />
-                  </>
-                ) : (
-                  <div className="card" style={{ textAlign: 'center', padding: 'var(--space-2xl) var(--space-lg)' }}>
-                    <Shield size={36} color="var(--color-cyan)" style={{ margin: '0 auto var(--space-md)' }} />
-                    <h3 className="font-heading" style={{ fontSize: '13px', color: 'var(--color-text)', marginBottom: 'var(--space-xs)' }}>
-                      ZERO-COST TRANSFER PIPELINE IDLE
-                    </h3>
-                    <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
-                      Stage a file using the dropzone on the left to initialize the 16MB chunk slicing engine, generate the ephemeral AES-256 key, and open the peer transmission channel.
-                    </p>
-                  </div>
-                )}
-
-                {/* Security Breakdown */}
-                <SecurityPanel
-                  hasKey={Boolean(cryptoKey)}
-                  sha256={sha256}
-                  isVerified={Boolean(sha256)}
-                />
-              </div>
+              {/* Security Guarantee Footer */}
+              <SecurityPanel
+                hasKey={Boolean(cryptoKey)}
+                sha256={sha256}
+                isVerified={Boolean(sha256)}
+              />
             </div>
-          )}
-        </div>
+
+            {/* Zero Cost Trust Badges */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '24px',
+              marginTop: '24px',
+              fontSize: '12px',
+              color: 'var(--color-text-dim)',
+              flexWrap: 'wrap',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Shield size={14} color="var(--color-cta)" />
+                <span>Zero Cloud Storage (P2P Mode)</span>
+              </div>
+              <div>•</div>
+              <div>Free Google STUN + Metered TURN</div>
+              <div>•</div>
+              <div>100% Client-Side Encryption</div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Share Modal */}
@@ -440,32 +450,31 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Futuristic Space Tech Footer */}
+      {/* Minimal Footer */}
       <footer style={{
+        padding: '18px 24px',
         borderTop: '1px solid var(--color-border)',
-        background: 'rgba(15, 23, 42, 0.95)',
-        padding: 'var(--space-lg) 0',
+        background: 'rgba(9, 13, 22, 0.8)',
+        fontSize: '12px',
+        color: 'var(--color-text-dim)',
       }}>
-        <div className="hud-container" style={{
+        <div style={{
+          maxWidth: '1200px',
+          margin: '0 auto',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
-          gap: 'var(--space-md)',
-          fontSize: '11px',
-          color: 'var(--color-text-dim)',
+          gap: '12px',
         }}>
-          <div>
-            HYPERBEAM PROTOCOL • ZERO-COST ARCHITECTURE SPECIFICATION COMPLIANT
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-            <span>CLOUDFLARE R2 (10GB/MO)</span>
-            <span>•</span>
-            <span>GOOGLE PUBLIC STUN</span>
-            <span>•</span>
-            <span>METERED OPENRELAY TURN</span>
-            <span>•</span>
-            <span>WEB CRYPTO AES-256-GCM</span>
+          <div>HyperBeam Protocol • Zero-Cost Cloud Architecture Specification</div>
+          <div style={{ display: 'flex', gap: '16px' }}>
+            <a href="https://github.com/ghodadrakeyur34-byte/filebackend" target="_blank" rel="noreferrer">
+              Backend
+            </a>
+            <a href="https://github.com/ghodadrakeyur34-byte/filefrontend" target="_blank" rel="noreferrer">
+              Frontend
+            </a>
           </div>
         </div>
       </footer>

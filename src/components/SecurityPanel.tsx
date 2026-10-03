@@ -1,5 +1,5 @@
-import React from 'react';
-import { Lock, ShieldCheck, Key, FileCheck, CheckCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { Lock, Key, FileCheck, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface SecurityPanelProps {
   hasKey: boolean;
@@ -8,92 +8,99 @@ interface SecurityPanelProps {
 }
 
 export const SecurityPanel: React.FC<SecurityPanelProps> = ({ hasKey, sha256, isVerified }) => {
+  const [showDetails, setShowDetails] = useState(false);
+
   return (
-    <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-        <ShieldCheck size={18} color="var(--color-cta)" />
-        <h3 className="font-heading" style={{ fontSize: '12px', color: 'var(--color-text)' }}>
-          ZERO-KNOWLEDGE SECURITY & CRYPTOGRAPHY
-        </h3>
-      </div>
-
+    <div style={{
+      borderTop: '1px solid var(--color-border)',
+      paddingTop: '16px',
+      marginTop: '16px',
+    }}>
+      {/* Compact Security Header / Toggle */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-        gap: 'var(--space-md)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '12px',
       }}>
-        {/* AES-256-GCM Status */}
-        <div style={{
-          background: 'rgba(15, 23, 42, 0.6)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-md)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', marginBottom: 'var(--space-xs)' }}>
-            <Lock size={15} color="var(--color-cta)" />
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text)' }}>
-              END-TO-END CIPHER
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+            <Lock size={13} color={hasKey ? 'var(--color-cta)' : 'var(--color-text-dim)'} />
+            <span>AES-256-GCM {hasKey ? 'Active' : 'Zero-Knowledge'}</span>
           </div>
-          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: 'var(--space-xs)' }}>
-            Payloads encrypted in-browser using <strong>AES-256-GCM</strong> with 96-bit initialization vectors per chunk slice.
-          </p>
-          <span className="badge badge-green">
-            {hasKey ? 'ACTIVE & ENCRYPTED' : 'AWAITING KEY'}
-          </span>
-        </div>
 
-        {/* Ephemeral Key Zero-Knowledge Anchor */}
-        <div style={{
-          background: 'rgba(15, 23, 42, 0.6)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-md)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', marginBottom: 'var(--space-xs)' }}>
-            <Key size={15} color="var(--color-cyan)" />
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text)' }}>
-              ZERO-KNOWLEDGE ANCHOR
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+            <Key size={13} color="var(--color-cyan)" />
+            <span>Key Stays in Browser Anchor</span>
           </div>
-          <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginBottom: 'var(--space-xs)' }}>
-            Decryption key is stored strictly in the URL hash fragment (<code>#key=...</code>). The anchor is <strong>never transmitted to any server</strong>.
-          </p>
-          <span className="badge badge-cyan">CLIENT-SIDE ONLY</span>
-        </div>
 
-        {/* SHA-256 Integrity Verification */}
-        <div style={{
-          background: 'rgba(15, 23, 42, 0.6)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-md)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', marginBottom: 'var(--space-xs)' }}>
-            <FileCheck size={15} color="var(--color-amber)" />
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text)' }}>
-              SHA-256 CHECKSUM
-            </span>
-          </div>
-          <p style={{
-            fontSize: '10px',
-            fontFamily: 'var(--font-mono)',
-            color: 'var(--color-text-muted)',
-            wordBreak: 'break-all',
-            marginBottom: 'var(--space-xs)',
-          }}>
-            {sha256 || 'Calculated during transmission slice'}
-          </p>
-          {isVerified ? (
-            <span className="badge badge-green">
-              <CheckCircle size={11} />
-              CHECKSUM VERIFIED BIT-FOR-BIT
-            </span>
-          ) : (
-            <span className="badge badge-amber">STREAM VERIFICATION READY</span>
+          {sha256 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: isVerified ? 'var(--color-cta)' : 'var(--color-text-muted)' }}>
+              <FileCheck size={13} color={isVerified ? 'var(--color-cta)' : 'var(--color-amber)'} />
+              <span>SHA-256 {isVerified ? 'Verified' : 'Digest Ready'}</span>
+            </div>
           )}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowDetails(!showDetails)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--color-text-dim)',
+            fontSize: '11px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+          }}
+        >
+          {showDetails ? 'Hide Specs' : 'Security Specs'}
+          {showDetails ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
       </div>
+
+      {/* Expandable Technical Details */}
+      {showDetails && (
+        <div style={{
+          marginTop: '14px',
+          padding: '14px',
+          background: 'rgba(255, 255, 255, 0.02)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: '11px',
+          color: 'var(--color-text-dim)',
+          lineHeight: 1.5,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '12px',
+        }}>
+          <div>
+            <strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: '2px' }}>
+              End-to-End Encryption
+            </strong>
+            Payload slices are encrypted locally via Web Crypto API with 96-bit initialization vectors.
+          </div>
+          <div>
+            <strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: '2px' }}>
+              Zero Server Exposure
+            </strong>
+            The symmetric key is placed after the URL hash fragment (#key=...). HTTP servers never receive it.
+          </div>
+          {sha256 && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: '2px' }}>
+                Payload Checksum
+              </strong>
+              <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)', fontSize: '10px', wordBreak: 'break-all' }}>
+                {sha256}
+              </code>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

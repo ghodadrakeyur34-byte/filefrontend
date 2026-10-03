@@ -1,16 +1,22 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileText, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, File as FileIcon, X } from 'lucide-react';
 import { SpeedMonitor } from '../lib/speedMonitor.js';
 import { calculateOptimalChunkSize, generateChunkManifest } from '../lib/chunker.js';
 import { soundEffects } from '../lib/audio.js';
 
 interface DropZoneProps {
   onFileSelected: (file: File) => void;
+  onClearFile?: () => void;
   selectedFile: File | null;
   disabled?: boolean;
 }
 
-export const DropZone: React.FC<DropZoneProps> = ({ onFileSelected, selectedFile, disabled }) => {
+export const DropZone: React.FC<DropZoneProps> = ({
+  onFileSelected,
+  onClearFile,
+  selectedFile,
+  disabled,
+}) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -48,7 +54,7 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFileSelected, selectedFile
   const chunks = selectedFile ? generateChunkManifest(selectedFile.size, chunkSize) : [];
 
   return (
-    <div style={{ marginBottom: 'var(--space-xl)' }}>
+    <div style={{ marginBottom: '20px' }}>
       <input
         ref={fileInputRef}
         type="file"
@@ -57,105 +63,122 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFileSelected, selectedFile
         disabled={disabled}
       />
 
-      <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={() => !disabled && fileInputRef.current?.click()}
-        style={{
-          border: `2px dashed ${isDragOver ? 'var(--color-cta)' : selectedFile ? 'rgba(34, 197, 94, 0.4)' : 'var(--color-border)'}`,
-          borderRadius: 'var(--radius-xl)',
-          padding: 'var(--space-2xl) var(--space-xl)',
-          textAlign: 'center',
-          background: isDragOver ? 'rgba(34, 197, 94, 0.05)' : 'rgba(30, 41, 59, 0.4)',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          position: 'relative',
-          overflow: 'hidden',
-          transition: 'all var(--transition-normal)',
-          boxShadow: isDragOver ? 'var(--shadow-glow)' : 'var(--shadow-sm)',
-        }}
-      >
-        {/* Futuristic Laser Scanner Animation */}
-        <div className="laser-scanner" />
-
-        {selectedFile ? (
-          <div>
+      {selectedFile ? (
+        /* Selected File Card */
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.03)',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '16px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
             <div style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: 'var(--radius-full)',
-              background: 'rgba(34, 197, 94, 0.12)',
-              border: '1px solid var(--color-cta)',
+              width: '42px',
+              height: '42px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-cta-soft)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              margin: '0 auto var(--space-md)',
-              boxShadow: 'var(--shadow-glow)',
+              flexShrink: 0,
             }}>
-              <CheckCircle2 size={28} color="var(--color-cta)" />
+              <FileIcon size={20} color="var(--color-cta)" />
             </div>
 
-            <h3 className="font-heading" style={{ fontSize: '15px', color: 'var(--color-text)', marginBottom: 'var(--space-xs)' }}>
-              {selectedFile.name}
-            </h3>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 'var(--space-md)',
-              fontSize: '13px',
-              color: 'var(--color-text-muted)',
-              marginBottom: 'var(--space-md)',
-            }}>
-              <span>SIZE: <strong style={{ color: 'var(--color-text)' }}>{SpeedMonitor.formatBytes(selectedFile.size)}</strong></span>
-              <span>•</span>
-              <span>PARTITION: <strong style={{ color: 'var(--color-cyan)' }}>{chunks.length} CHUNKS ({SpeedMonitor.formatBytes(chunkSize)}/ea)</strong></span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: 'var(--color-text)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                {selectedFile.name}
+              </div>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '12px',
+                color: 'var(--color-text-muted)',
+                marginTop: '2px',
+              }}>
+                <span>{SpeedMonitor.formatBytes(selectedFile.size)}</span>
+                <span>•</span>
+                <span style={{ color: 'var(--color-cyan)' }}>{chunks.length} chunks ({SpeedMonitor.formatBytes(chunkSize)}/ea)</span>
+              </div>
             </div>
-
-            <p style={{ fontSize: '11px', color: 'var(--color-text-dim)' }}>
-              Click to replace payload or drop a different file.
-            </p>
           </div>
-        ) : (
-          <div>
-            <div style={{
-              width: '64px',
-              height: '64px',
-              borderRadius: 'var(--radius-full)',
-              background: 'rgba(30, 41, 59, 0.7)',
-              border: '1px solid var(--color-border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto var(--space-md)',
-            }}>
-              <UploadCloud size={32} color={isDragOver ? 'var(--color-cta)' : 'var(--color-cyan)'} />
-            </div>
 
-            <h3 className="font-heading" style={{ fontSize: '14px', color: 'var(--color-text)', marginBottom: 'var(--space-xs)' }}>
-              STAGE LARGE PAYLOAD FOR TRANSMISSION
-            </h3>
-
-            <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: 'var(--space-md)', maxWidth: '480px', margin: '0 auto var(--space-md)' }}>
-              Drag and drop any file up to 50 GB. Memory-bounded Web Streams will slice chunks in real-time with zero browser heap overflow.
-            </p>
-
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               type="button"
-              className="btn-secondary"
+              onClick={() => fileInputRef.current?.click()}
               disabled={disabled}
-              onClick={(e) => {
-                e.stopPropagation();
-                fileInputRef.current?.click();
-              }}
+              className="btn-secondary"
+              style={{ padding: '6px 12px', fontSize: '12px' }}
             >
-              <FileText size={15} />
-              BROWSE LOCAL STORAGE
+              Change
             </button>
+            {onClearFile && (
+              <button
+                type="button"
+                onClick={onClearFile}
+                disabled={disabled}
+                className="btn-icon"
+                style={{ width: '32px', height: '32px' }}
+                title="Remove file"
+              >
+                <X size={15} />
+              </button>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* Empty Drop Area */
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => !disabled && fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${isDragOver ? 'var(--color-cta)' : 'rgba(255, 255, 255, 0.12)'}`,
+            borderRadius: 'var(--radius-xl)',
+            padding: '36px 20px',
+            textAlign: 'center',
+            background: isDragOver ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.02)',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            transition: 'all var(--transition-fast)',
+          }}
+        >
+          <div style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: 'var(--radius-lg)',
+            background: 'rgba(255, 255, 255, 0.04)',
+            border: '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 12px',
+          }}>
+            <UploadCloud size={24} color={isDragOver ? 'var(--color-cta)' : 'var(--color-text-muted)'} />
+          </div>
+
+          <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text)', marginBottom: '4px' }}>
+            Click or drag file here to transfer
+          </div>
+
+          <p style={{ fontSize: '12px', color: 'var(--color-text-dim)', margin: 0 }}>
+            Supports any file up to 50 GB. Memory-bounded Web Streams handle slicing locally.
+          </p>
+        </div>
+      )}
     </div>
   );
 };

@@ -11,17 +11,25 @@ import { R2TransferEngine } from '../lib/r2Uploader.js';
 import { ChunkMatrix } from './ChunkMatrix.js';
 import { SpeedTelemetry } from './SpeedTelemetry.js';
 import { SecurityPanel } from './SecurityPanel.js';
-import { DownloadCloud, CheckCircle2, HardDrive, RefreshCw } from 'lucide-react';
+import { DownloadCloud, CheckCircle2, FileIcon, ArrowRight, RefreshCw, Key } from 'lucide-react';
 
 interface ReceiveCockpitProps {
-  roomId: string;
+  roomId?: string;
   keyFragment?: string;
+  onConnectRoom?: (roomId: string, key?: string) => void;
   onReset?: () => void;
 }
 
-export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragment, onReset }) => {
+export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({
+  roomId: initialRoomId = '',
+  keyFragment: initialKey = '',
+  onConnectRoom,
+  onReset,
+}) => {
+  const [roomId, setRoomId] = useState(initialRoomId);
+  const [inputRoom, setInputRoom] = useState(initialRoomId);
   const [manifest, setManifest] = useState<TransferManifest | null>(null);
-  const [status, setStatus] = useState<string>('Connecting to signaling relay...');
+  const [status, setStatus] = useState<string>('Ready to connect');
   const [isReceiving, setIsReceiving] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [cryptoKey, setCryptoKey] = useState<CryptoKey | null>(null);
@@ -47,10 +55,18 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
   const signalingRef = useRef<SignalingClient | null>(null);
   const peerRef = useRef<HyperBeamPeer | null>(null);
 
-  // 1. Parse and import encryption key from URL fragment
+  // Sync if prop changes
+  useEffect(() => {
+    if (initialRoomId) {
+      setRoomId(initialRoomId);
+      setInputRoom(initialRoomId);
+    }
+  }, [initialRoomId]);
+
+  // Parse and import key
   useEffect(() => {
     async function loadKey() {
-      const rawKey = keyFragment || (window.location.hash.startsWith('#key=') ? window.location.hash.replace('#key=', '') : '');
+      const rawKey = initialKey || (window.location.hash.startsWith('#key=') ? window.location.hash.replace('#key=', '') : '');
       if (rawKey) {
         try {
           const key = await importKeyFromBase64Url(rawKey);
@@ -61,29 +77,30 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
       }
     }
     loadKey();
-  }, [keyFragment]);
+  }, [initialKey]);
 
-  // 2. Fetch manifest or connect to signaling
+  // Connect to room
   useEffect(() => {
+    if (!roomId) return;
     let unmounted = false;
 
     async function initSignaling() {
+      setStatus('Connecting to signaling gateway...');
+
       try {
-        // Try fetching manifest from REST first
         const res = await fetch(`${API_URL}/api/session/${roomId}`);
         if (res.ok) {
           const data = await res.json();
           if (data.manifest && !unmounted) {
             setManifest(data.manifest);
             initChunks(data.manifest);
-            setStatus('Manifest loaded. Ready to receive payload.');
+            setStatus('File manifest ready. Click Download to start.');
           }
         }
       } catch (err) {
         console.warn('REST manifest fetch error:', err);
       }
 
-      // Initialize signaling client
       const signaling = new SignalingClient();
       signalingRef.current = signaling;
 
@@ -94,7 +111,7 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
           const m = msg.payload as TransferManifest;
           setManifest(m);
           initChunks(m);
-          setStatus('Manifest received from sender. Ready to initialize stream.');
+          setStatus('Peer online. Ready to stream file.');
         } else if (msg.type === 'offer' && msg.payload) {
           handleIncomingOffer((msg.payload as { sdp: RTCSessionDescriptionInit }).sdp, msg.senderId);
         } else if (msg.type === 'ice-candidate' && msg.payload) {
@@ -106,7 +123,7 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
         await signaling.connect(roomId, 'receiver');
       } catch (err) {
         console.error('Signaling connection error:', err);
-        setStatus('Signaling offline. Make sure backend is running.');
+        setStatus('Signaling offline. Ensure backend is running.');
       }
     }
 
@@ -163,12 +180,11 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
     }
   };
 
-  // 3. User triggers stream receive and picks file location
   const handleStartDownload = async () => {
     if (!manifest) return;
     try {
       soundEffects.playLock();
-      setStatus('Initializing Direct-to-Disk storage...');
+      setStatus('Initializing local disk storage...');
 
       const { writer, isDirectDisk: direct } = await initializeDestinationWriter(
         manifest.fileName,
@@ -177,9 +193,8 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
       diskWriterRef.current = writer;
       setIsDirectDisk(direct);
       setIsReceiving(true);
-      setStatus('Streaming payload directly to local disk...');
+      setStatus('Streaming directly to local disk...');
 
-      // If Mode B (Cloudflare R2)
       if (manifest.mode === 'r2' && cryptoKey) {
         setTelemetry((prev) => ({ ...prev, iceType: 'r2-edge', connectionState: 'streaming' }));
         await R2TransferEngine.downloadFile(
@@ -226,12 +241,10 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
       await diskWriterRef.current.writeChunk(decrypted);
     }
 
-    // Update chunk status in state
     setChunks((prev) =>
       prev.map((c) => (c.index === chunkIndex ? { ...c, status: 'completed' } : c))
     );
 
-    // Update Speed and Telemetry
     if (manifest && speedMonitorRef.current) {
       const bytesNow = Math.min(manifest.fileSize, (chunkIndex + 1) * manifest.chunkSize);
       speedMonitorRef.current.recordProgress(bytesNow);
@@ -262,130 +275,201 @@ export const ReceiveCockpit: React.FC<ReceiveCockpitProps> = ({ roomId, keyFragm
     soundEffects.playComplete();
     setIsComplete(true);
     setIsReceiving(false);
-    setStatus('Stream finished! File safely assembled on disk.');
+    setStatus('Transfer completed successfully!');
 
     if (manifest?.sha256) {
       setIsHashValid(true);
     }
   };
 
+  const handleManualJoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputRoom.trim()) return;
+
+    let targetRoom = inputRoom.trim();
+    let targetKey = '';
+
+    // Check if user pasted a full URL
+    try {
+      if (targetRoom.includes('http://') || targetRoom.includes('https://') || targetRoom.includes('?room=')) {
+        const url = new URL(targetRoom.startsWith('http') ? targetRoom : `http://localhost/${targetRoom}`);
+        const r = url.searchParams.get('room');
+        if (r) targetRoom = r;
+        if (url.hash && url.hash.includes('#key=')) {
+          targetKey = url.hash.replace('#key=', '');
+        }
+      }
+    } catch {
+      // Plain room PIN
+    }
+
+    setRoomId(targetRoom);
+    onConnectRoom?.(targetRoom, targetKey);
+  };
+
   return (
-    <div className="col-12">
-      {/* Top Banner */}
-      <div className="card" style={{ marginBottom: 'var(--space-xl)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-xs)' }}>
-              <span className="beacon" />
-              <h2 className="font-heading" style={{ fontSize: '16px', color: 'var(--color-text)' }}>
-                INCOMING PAYLOAD HUD
-              </h2>
-              <span className="badge badge-green">RECEIVER COCKPIT</span>
+    <div style={{ maxWidth: '680px', margin: '0 auto', width: '100%' }}>
+      {/* If no room is connected yet, display Room PIN Input */}
+      {!roomId ? (
+        <div className="glass-card" style={{ padding: '32px' }}>
+          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: 'var(--radius-lg)',
+              background: 'var(--color-cta-soft)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 12px',
+            }}>
+              <DownloadCloud size={24} color="var(--color-cta)" />
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
-              STATUS: <strong style={{ color: 'var(--color-cta)' }}>{status}</strong>
-            </div>
+            <h2 style={{ fontSize: '20px', color: 'var(--color-text)', marginBottom: '6px' }}>
+              Receive an Encrypted File
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
+              Enter the transfer PIN or paste the full secure transfer link:
+            </p>
           </div>
 
-          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+          <form onSubmit={handleManualJoin} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+            <input
+              type="text"
+              placeholder="e.g. HB-8X92-41FA or https://..."
+              value={inputRoom}
+              onChange={(e) => setInputRoom(e.target.value)}
+              className="input"
+              style={{ fontSize: '13px' }}
+            />
+            <button type="submit" className="btn-primary" style={{ whiteSpace: 'nowrap' }}>
+              Connect <ArrowRight size={15} />
+            </button>
+          </form>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: 'var(--color-text-dim)' }}>
+            <Key size={13} color="var(--color-cyan)" />
+            <span>Decryption keys inside URL anchors remain client-side only.</span>
+          </div>
+        </div>
+      ) : (
+        /* Connected Room Cockpit */
+        <div className="glass-card" style={{ padding: '28px' }}>
+          {/* Status Header */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: '20px',
+            paddingBottom: '16px',
+            borderBottom: '1px solid var(--color-border)',
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span className="status-dot" />
+                <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text)' }}>
+                  Room {roomId}
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
+                {status}
+              </div>
+            </div>
+
             {onReset && (
-              <button onClick={onReset} className="btn-secondary" style={{ fontSize: '11px', padding: '8px 14px' }}>
+              <button
+                onClick={onReset}
+                className="btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '12px' }}
+              >
                 <RefreshCw size={13} />
-                NEW TRANSFER
+                Change Room
               </button>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* Manifest Overview */}
-      {manifest && (
-        <div className="card" style={{ marginBottom: 'var(--space-xl)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-            <HardDrive size={18} color="var(--color-cta)" />
-            <h3 className="font-heading" style={{ fontSize: '13px', color: 'var(--color-text)' }}>
-              PAYLOAD SPECIFICATION
-            </h3>
-          </div>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: 'var(--space-md)',
-            marginBottom: 'var(--space-lg)',
-          }}>
-            <div>
-              <div style={{ fontSize: '10px', color: 'var(--color-text-dim)' }}>FILE NAME</div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text)' }}>{manifest.fileName}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '10px', color: 'var(--color-text-dim)' }}>TOTAL SIZE</div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-cta)' }}>
-                {SpeedMonitor.formatBytes(manifest.fileSize)}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: '10px', color: 'var(--color-text-dim)' }}>SLICING PLAN</div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-cyan)' }}>
-                {manifest.totalChunks} Chunks ({SpeedMonitor.formatBytes(manifest.chunkSize)}/ea)
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: '10px', color: 'var(--color-text-dim)' }}>TRANSFER ARCHITECTURE</div>
-              <div style={{ fontSize: '14px', fontWeight: 700, color: '#A78BFA' }}>
-                {manifest.mode === 'p2p' ? 'WebRTC Direct P2P' : 'Cloudflare R2 Staging'}
-              </div>
-            </div>
-          </div>
-
-          {/* Action Button */}
-          {!isReceiving && !isComplete && (
-            <button
-              onClick={handleStartDownload}
-              className="btn-primary"
-              style={{ width: '100%', padding: '16px 24px', fontSize: '13px' }}
-            >
-              <DownloadCloud size={18} />
-              INITIALIZE DIRECT-TO-DISK STREAM
-            </button>
-          )}
-
-          {isComplete && (
+          {/* Manifest Card */}
+          {manifest ? (
             <div style={{
-              background: 'rgba(34, 197, 94, 0.1)',
-              border: '1px solid var(--color-cta)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-md)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-md)',
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '18px 20px',
+              marginBottom: '20px',
             }}>
-              <CheckCircle2 size={24} color="var(--color-cta)" />
-              <div>
-                <strong style={{ color: 'var(--color-text)' }}>Payload Assembled Successfully</strong>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
-                  File written {isDirectDisk ? 'directly to NVMe disk' : 'via stream download'}.
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }}>
+                <div style={{
+                  width: '44px',
+                  height: '44px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--color-cta-soft)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}>
+                  <FileIcon size={22} color="var(--color-cta)" />
+                </div>
+                <div>
+                  <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text)' }}>
+                    {manifest.fileName}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                    {SpeedMonitor.formatBytes(manifest.fileSize)} • {manifest.totalChunks} Chunks ({SpeedMonitor.formatBytes(manifest.chunkSize)}/ea)
+                  </div>
                 </div>
               </div>
+
+              {!isReceiving && !isComplete && (
+                <button
+                  onClick={handleStartDownload}
+                  className="btn-primary"
+                  style={{ width: '100%', padding: '14px 20px', fontSize: '14px' }}
+                >
+                  <DownloadCloud size={18} />
+                  Download & Stream to Disk
+                </button>
+              )}
+
+              {isComplete && (
+                <div style={{
+                  background: 'rgba(34, 197, 94, 0.1)',
+                  border: '1px solid rgba(34, 197, 94, 0.3)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  color: 'var(--color-text)',
+                  fontSize: '13px',
+                }}>
+                  <CheckCircle2 size={18} color="var(--color-cta)" />
+                  <span>File successfully saved {isDirectDisk ? 'directly to disk' : 'via stream'}.</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--color-text-muted)', fontSize: '13px' }}>
+              Waiting for sender to broadcast file manifest...
             </div>
           )}
+
+          {/* Active Telemetry & Chunks */}
+          {(isReceiving || isComplete) && (
+            <>
+              <SpeedTelemetry telemetry={telemetry} />
+              <ChunkMatrix chunks={chunks} />
+            </>
+          )}
+
+          {/* Security Status */}
+          <SecurityPanel
+            hasKey={Boolean(cryptoKey)}
+            sha256={manifest?.sha256}
+            isVerified={isHashValid}
+          />
         </div>
       )}
-
-      {/* Telemetry and Chunk Matrix */}
-      {(isReceiving || isComplete) && (
-        <>
-          <SpeedTelemetry telemetry={telemetry} />
-          <ChunkMatrix chunks={chunks} />
-        </>
-      )}
-
-      {/* Security Status Panel */}
-      <SecurityPanel
-        hasKey={Boolean(cryptoKey)}
-        sha256={manifest?.sha256}
-        isVerified={isHashValid}
-      />
     </div>
   );
 };
