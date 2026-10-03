@@ -1,9 +1,8 @@
 const isDev = import.meta.env.DEV;
 
-// Detect API host based on environment or fallback to current origin / port 8787
-export const API_URL = import.meta.env.VITE_API_URL || (isDev ? 'http://localhost:8787' : window.location.origin);
-export const WS_URL = import.meta.env.VITE_WS_URL || (
-  isDev 
-    ? 'ws://localhost:8787/ws' 
-    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
-);
+// Deployed Cloudflare Worker endpoints
+const PROD_API = 'https://hyperbeam-backend.ghodadrakeyur34.workers.dev';
+const PROD_WS = 'wss://hyperbeam-backend.ghodadrakeyur34.workers.dev/ws';
+
+export const API_URL = import.meta.env.VITE_API_URL || (isDev ? 'http://localhost:8787' : PROD_API);
+export const WS_URL = import.meta.env.VITE_WS_URL || (isDev ? 'ws://localhost:8787/ws' : PROD_WS);
